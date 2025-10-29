@@ -1,0 +1,62 @@
+body { font-family: Arial, sans-serif; margin: 0; color: #222; }
+.topbar { display:flex; justify-content:space-between; align-items:center; padding:10px 16px; background:#0b5; color:#fff; }
+.container { padding: 16px; max-width: 960px; margin: 0 auto; }
+.controls { display:flex; gap:8px; align-items:center; margin-bottom: 12px; }
+.persona { background:#f6f6f6; padding:10px; border-radius:6px; margin-bottom:12px; }
+.persona .label { font-weight: bold; margin-left: 12px; }
+.conversation { display:flex; flex-direction: column; gap:8px; }
+.transcript { border:1px solid #ddd; min-height:220px; padding:10px; border-radius:6px; overflow:auto; }
+.msg { margin:6px 0; }
+.msg.rep { color:#035; }
+.msg.doctor { color:#530; }
+.input-row { display:flex; gap:8px; }
+input#rep-input { flex:1; padding:8px; }
+button { padding:8px 12px; cursor:pointer; }
+.feedback pre { background:#f9f9f9; padding:10px; border-radius:6px; overflow:auto; }
+
+/* Coaching Overlay Styles */
+.coaching-overlay {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  transition: all 0.3s ease;
+}
+
+.coaching-hint {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: white;
+  font-weight: 500;
+}
+
+.hint-icon {
+  font-size: 24px;
+  animation: pulse 2s infinite;
+}
+
+.hint-text {
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+@keyframes pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+  100% { transform: scale(1); }
+}
+
+.coaching-overlay.warning {
+  background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%);
+}
+
+.coaching-overlay.success {
+  background: linear-gradient(135deg, #00b894 0%, #00a085 100%);
+}
+
+.coaching-overlay.info {
+  background: linear-gradient(135deg, #74b9ff 0%, #0984e3 100%);
+}
+

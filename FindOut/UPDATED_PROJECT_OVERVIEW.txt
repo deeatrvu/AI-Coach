@@ -1,0 +1,767 @@
+MedRep Coach — Speech-to-Speech (Realtime) Edition (Voice-Only)
+
+Overview
+- Purpose: Train medical representatives via realistic, persona-driven conversations with AI “doctors”.
+- Mode: Speech-to-Speech (voice in → voice out) using OpenAI Realtime model gpt-4o-realtime-preview.
+- Stack (unchanged):
+  - Frontend: jQuery + TypeScript + ESBuild, WebRTC in the browser for realtime audio.
+- Backend: Python FastAPI (REST) — issues ephemeral session tokens; serves personas; provides tone controller; runs evaluation.
+  - Storage: JSON files under backend/storage/ for session transcripts.
+
+What’s New (Voice-Only)
+- Realtime audio via WebRTC directly between browser and OpenAI Realtime API.
+- Backend mints short‑lived session tokens (ephemeral keys) and never exposes permanent keys to the browser.
+- Runtime tone control: client sends compact session.update guidance (mood/time pressure/skepticism + hint) to bias model tone.
+- Barge-in and improved mic handling (echo cancellation, noise suppression, auto-gain, push-to-talk, mute, basic VAD).
+
+High-Level Architecture
+1) User opens frontend → grants microphone permission.
+2) Frontend calls Backend REST GET /session-token → receives short-lived Realtime session JSON.
+3) Frontend creates RTCPeerConnection, adds mic audio track, negotiates SDP with OpenAI Realtime endpoint using the ephemeral token.
+4) Browser streams mic audio to the model; model streams synthesized voice back. Remote audio is played in an <audio autoplay> element.
+5) Frontend runs coaching overlay, tone controller, and at end requests structured evaluation.
+
+Key Responsibilities
+- Backend (FastAPI, REST):
+  - Security boundary for secrets (OpenAI API key never exposed to browser).
+  - GET /session-token → creates OpenAI /v1/realtime/sessions with server key; returns ephemeral session JSON to client.
+  - GET /api/personas → serve 8 realistic personas (reference data).
+  - POST /api/tone-decide → compact tone controller based on MR/doctor utterances.
+  - POST /api/voice/evaluate and /api/voice/evaluate2 → heuristic and structured evaluations.
+- Frontend (jQuery + TS):
+  - Microphone capture with enhanced constraints; push-to-talk (Space), mute (M), toggle PTT (P).
+  - WebRTC setup to OpenAI Realtime using the ephemeral session; remote audio playback.
+  - Coaching overlay and tone nudging via session.update.
+  - End-of-call evaluation request and feedback rendering.
+
+Model and Voice
+- Model: gpt-4o-realtime-preview
+- Voice: Set in session creation (e.g., "voice": "verse"). Can be adjusted per your preference.
+
+Communication Principles for MR (Do’s and Don’ts)
+- Do provide factual, verifiable information; adapt depth based on the doctor’s curiosity and requests.
+- Do share evidence when asked (e.g., trial names, patient counts, outcomes, guideline references).
+- Don’t use vague claims like “best” without proof; this triggers irritation and can end the call.
+- The system should guide the MR: when irritation is detected, de-escalate; when curiosity is detected, provide deeper evidence.
+
+Endpoints Summary (Backend, Voice-Only)
+- GET /health → status OK
+- GET /api/personas → list of doctor personas
+- GET /session-token → ephemeral OpenAI Realtime session JSON
+- POST /api/tone-decide → returns { mood, timePressure, skepticism, action, pauseReply }
+- POST /api/voice/evaluate → heuristic evaluation (scores, compliance, turn-level)
+- POST /api/voice/evaluate2 → structured evaluation (summary, scores, highlights, actions, violations)
+
+Data Flow (Realtime, Speech-to-Speech)
+- Browser:
+  - navigator.mediaDevices.getUserMedia({ audio: true }) → mic track
+  - fetch(/session-token) → { client_secret / ephemeral token, model, voice }
+  - new RTCPeerConnection() → addTrack(mic)
+  - Create SDP offer → send to OpenAI Realtime endpoint with Authorization: Bearer <ephemeral>
+  - Receive SDP answer + remote audio track → attach to <audio autoplay>
+  - Send initial coaching instructions; the model infers and adapts the “doctor persona” and tone dynamically.
+  - On each doctor reply, client may send session.update tone guidance (mood/time pressure/skepticism + hint) to steer the next reply.
+
+Dynamic Persona & State Inference
+- No manual persona selection in the UI.
+- The model is instructed to behave as a realistic doctor and dynamically adapt along axes such as:
+  - Skepticism level, curiosity, time pressure, mood (irritation vs engagement).
+  - Focus areas (evidence-first, side-effects-first, practicality/coverage, etc.).
+- The MR receives guidance from the coach layer (LLM prompts/instructions) to adapt responses accordingly.
+
+Evaluation Flow
+- At end of call, client posts transcript to /api/voice/evaluate (heuristic) or /api/voice/evaluate2 (structured) for:
+  - Summary, scores (accuracy, empathy, compliance, adaptability)
+  - Highlights (praise/issues) and top actions
+  - Compliance violations (must-say / must-not-say)
+
+Local Development (Working Example)
+Prereqs
+- Python 3.10+
+- Node 18+
+- OpenAI API key set in backend environment (OPENAI_API_KEY)
+
+1) Backend
+- Create backend/.env with:
+  OPENAI_API_KEY=sk-...
+  OPENAI_TEXT_MODEL=gpt-4o-mini
+- Install dependencies:
+  pip install -r backend/requirements.txt
+- Run the server (default http://localhost:8000):
+  uvicorn app.main:app --reload --app-dir backend
+
+2) Frontend
+- Install deps and start dev server:
+  cd frontend
+  npm install
+  npm run dev
+- Open http://localhost:3000
+
+3) Realtime Call Walkthrough
+- Click Start (fetches /session-token and begins the WebRTC session).
+- Allow microphone access; speak naturally as the MR.
+- Use Space (push-to-talk), M (mute), P (toggle PTT). Interrupting will duck remote audio (barge-in).
+- The system adapts tone (engaged/dismissive) and coaching hints; session.update nudges bias the doctor’s next reply.
+- Click Stop to end; the client calls /api/voice/evaluate2 and shows structured feedback.
+
+Notes & Options
+- If corporate policy requires proxying media, add TURN or a media relay. Default is browser → OpenAI Realtime with ephemeral tokens.
+- This project is configured as voice-only; text-mode APIs were removed.
+
+Troubleshooting
+- 401/403 on session setup → ensure backend uses server-side OPENAI_API_KEY and returns the response JSON to the client.
+- No audio out → ensure remote track is attached to an <audio autoplay> element and that the browser allows autoplay with sound after user gesture.
+- Mic not detected → verify getUserMedia permission and that HTTPS or localhost is used.
+
+Security
+- The browser never sees your permanent OpenAI API key.
+- Ephemeral session credentials are short-lived and minted per request by your server.
+
+Future Enhancements
+- Automatic speech recognition mirrors to transcript in real time for richer evaluation.
+- Barge-in detection and VAD-driven push-to-talk UX.
+- Rich feedback visualization beyond JSON.
+
+Appendix — Alignment with System Notes
+
+Evaluation JSON Schema (Deterministic)
+- Input:
+  - transcript: [{ role: "mr"|"doctor", content: string, timestamp?: string }]
+  - must_say: string[]
+  - must_not_say: string[]
+  - final_state?: { mood: string; trust: number; skepticism_level: "Low"|"Medium"|"High"; time_pressure: number }
+- Output JSON:
+  {
+    "scores": {
+      "accuracy": number,            // 0–100
+      "empathy": number,             // 0–100
+      "compliance": number,          // 0–100
+      "adaptability": number         // 0–100
+    },
+    "compliance": {
+      "must_say_mentioned": string[],
+      "must_say_missed": string[],
+      "must_not_say_violations": string[]
+    },
+    "could_have_said": string[],      // missed opportunities aligned to persona
+    "turn_level_analysis": [
+      {
+        "turn_index": number,
+        "speaker": "mr"|"doctor",
+        "issue": string,
+        "suggestion": string
+      }
+    ],
+    "summary": string                 // concise narrative
+  }
+
+Must-Say / Must-Not-Say Configuration
+- Provided per session via client payload or scenario configuration.
+- Stored with the transcript to enable deterministic grading later.
+- Used by the Evaluation Engine to fill compliance.* and influence scores.compliance.
+
+Persona Catalog (Static Reference, 8 Profiles)
+- The backend ships a set of 8 realistic doctor personas (see backend/app/models/doctor_persona.py) with fields:
+  - id, description, communication_style, decision_factors[], skepticism_level, behavioral_triggers{positive[],negative[]},
+    knowledge_level, consultation_style, typical_objections[], preferred_evidence[], gender?, availableTimeSeconds
+- These serve as reference anchors for behavior and evaluation; runtime behavior remains dynamically inferred (no manual selection required in UI).
+
+Type Model Alignment (Front-End Types)
+- SkepticismLevel: "Low" | "Medium" | "High"
+- ConsultationStyle: "Fast-paced" | "Detailed" | "Data-driven" | "Intuitive" | "Empathetic"
+- KnowledgeLevel: "Generalist" | "Specialist" | "Thought Leader"
+- Gender: "Male" | "Female" | "Non-binary" | "Other" | "Prefer not to say"
+- DoctorTraitProfile fields match the backend persona schema plus availableTimeSeconds.
+
+Optional: Dynamic Persona Generation (Spec)
+- For future extensibility, a generator can synthesize new DoctorTraitProfile objects given inputs like specialization, experience_level, communication_style, consultation_style, skepticism_level, availableTimeSeconds, gender.
+- The generator should validate output against a strict schema (e.g., Zod) ensuring fields:
+  id, description (starts with a realistic doctor name), communication_style, decision_factors[], skepticism_level, behavioral_triggers{positive[],negative[]}, experience/knowledge level, consultation_style, typical_objections[], preferred_evidence[], gender?, availableTimeSeconds.
+- Any implementation (e.g., TypeScript + LangChain) must return JSON strictly matching the schema to remain compatible with evaluation and coaching modules.
+
+Reference — Types, Prompts, and Core Methods (TypeScript)
+
+```typescript
+// ===================== Types =====================
+
+type ConsultationStyle =
+  | "Fast-paced"
+  | "Detailed"
+  | "Data-driven"
+  | "Intuitive"
+  | "Empathetic";
+
+type KnowledgeLevel = "Generalist" | "Specialist" | "Thought Leader";
+
+type SkepticismLevel = "Low" | "Medium" | "High";
+
+type Gender = "Male" | "Female" | "Non-binary" | "Other" | "Prefer not to say";
+
+interface BehavioralTriggers {
+  positive: string[];
+  negative: string[];
+}
+
+interface DoctorTraitProfile {
+  id: string;
+  description: string;
+  communication_style: string;
+  decision_factors: string[];
+  baseline_skepticism_level: SkepticismLevel; // baseline
+  behavioral_triggers: BehavioralTriggers;
+  knowledge_level: KnowledgeLevel;
+  consultation_style: ConsultationStyle;
+  typical_objections: string[];
+  preferred_evidence: string[];
+  gender?: Gender;
+  availableTimeSeconds: number;
+}
+
+type ConversationStage = "Introduction" | "Discussion" | "ObjectionDiscussion" | "Closure";
+
+type DoctorMood = "Neutral" | "Engaged" | "Dismissive";
+
+interface DoctorBehaviorState {
+  mood: DoctorMood;
+  timePressureLevel: number; // 0–5
+  conversationStage: ConversationStage;
+  secondsElapsed: number;
+  trust: number; // 0–100
+  skepticismState: SkepticismState;
+  currentSkepticismLevel: SkepticismLevel;
+  notes?: string;
+}
+
+interface DoctorAgentInput {
+  persona: DoctorTraitProfile; // static persona (does not change)
+  currentMood: DoctorMood;
+  timePressureLevel: number;
+  conversationStage: ConversationStage;
+  secondsElapsed: number;
+  currentSkepticismLevel: SkepticismLevel;
+  remainingTime: number;
+  conversationTranscript: { role: "rep" | "doctor"; timestamp: string; message: string }[];
+  repLastMessage: string;
+  previousDoctorMessages: string[];
+}
+
+interface DoctorLLMResponse {
+  doctorReply: string;
+  relevancy: -1 | 0 | 1;
+  justification: string;
+  nextConversationStage: ConversationStage;
+  nextMood: DoctorMood;
+  signals?: string[];
+}
+
+type Role = "doctor" | "rep";
+
+interface ConversationMessage {
+  role: Role;
+  timestamp: string; // ISO
+  content: string;
+  isLastRepMessage?: boolean;
+}
+
+// ===================== Skepticism Management =====================
+
+interface SkepticismState { scores: number[]; }
+const MAX_WINDOW = 5;
+
+function updateSkepticism(state: SkepticismState, latestRelevancy: -1 | 0 | 1): SkepticismState {
+  const newScores = [...state.scores, latestRelevancy];
+  if (newScores.length > MAX_WINDOW) newScores.shift();
+  return { scores: newScores };
+}
+
+function calculateSkepticismLevel(baselineLevel: SkepticismLevel, state: SkepticismState): SkepticismLevel {
+  const sum = state.scores.reduce((a, v) => a + v, 0);
+  const base = { Low: 1, Medium: 2, High: 3 }[baselineLevel];
+  const upper = base + 1;
+  const lower = base - 1;
+  if (sum >= upper) return "Low";
+  if (sum <= lower) return "High";
+  return "Medium";
+}
+
+function initializeSkepticismState(): SkepticismState { return { scores: [] }; }
+
+// ===================== Prompt Templates =====================
+
+const systemPrompt = `
+You are a medical doctor engaged in a professional sales consultation with a medical representative (the "Rep").
+
+### Doctor Persona:
+- ID: {{persona.id}}
+- Description: {{persona.description}}
+- Communication style: {{persona.communication_style}}
+- Decision factors: {{persona.decision_factors.join(", ")}}
+- Skepticism level: {{persona.baseline_skepticism_level}}
+- Knowledge level: {{persona.knowledge_level}}
+- Consultation style: {{persona.consultation_style}}
+- Typical objections: {{persona.typical_objections.join(", ")}}
+- Preferred evidence: {{persona.preferred_evidence.join(", ")}}
+- Gender: {{persona.gender || "not specified"}}
+- Available time remaining: {{persona.availableTimeSeconds}} seconds
+- Current mood: {{currentMood}}
+- Time pressure level: {{timePressureLevel}}
+- Current conversation stage: {{conversationStage}}
+
+### Behavioral triggers:
+- Positive: {{persona.behavioral_triggers.positive.join(", ")}}
+- Negative: {{persona.behavioral_triggers.negative.join(", ")}}
+
+### Conversation history (most recent last):
+
+{{#each conversation}}
+- {{this.role}} [{{this.timestamp}}]: "{{this.content}}"{{#if this.isLastRepMessage}}  <-- LAST REP MESSAGE{{/if}}
+{{/each}}
+
+---
+
+### Your tasks:
+1. Reply persona-consistently to the LAST rep message.
+2. Score relevancy (-1, 0, 1) with brief justification.
+3. Decide next stage (Introduction, Discussion, ObjectionDiscussion, Closure).
+4. Include optional signals (e.g., "asks for data", "shows impatience").
+
+Return JSON only:
+{
+  "doctorReply": "<reply>",
+  "relevancy": -1 | 0 | 1,
+  "justification": "<brief>",
+  "nextConversationStage": "Introduction" | "Discussion" | "ObjectionDiscussion" | "Closure",
+  "signals": ["asks for data"]
+}
+`;
+
+function createSystemPrompt(params: {
+  persona: DoctorTraitProfile;
+  currentMood: DoctorMood;
+  conversationStage: ConversationStage;
+  timePressureLevel: number;
+  currentSkepticismLevel: SkepticismLevel;
+  remainingTime: number;
+  conversationTranscript: { role: "rep" | "doctor"; timestamp: string; message: string }[];
+  lastRepMessage: string;
+}): string {
+  const { persona, currentMood, conversationStage, timePressureLevel, currentSkepticismLevel, remainingTime, conversationTranscript, lastRepMessage } = params;
+  const joinOrEmpty = (arr: string[]) => (arr.length ? arr.join(", ") : "None");
+  const formattedTranscript = conversationTranscript
+    .map((m, i) => {
+      const isLastRep = m.role === "rep" && i === conversationTranscript.length - 1;
+      const label = isLastRep ? "Rep (LAST MESSAGE)" : (m.role === "rep" ? "Rep" : "Doctor");
+      return `[${m.timestamp}] ${label}: ${m.message}`;
+    })
+    .join("\n");
+
+  return `
+You are a medical doctor engaged in a professional sales consultation with a medical representative (the "rep").
+
+---
+
+### Doctor Persona (fixed):
+- ID: ${persona.id}
+- Description: ${persona.description}
+- Communication style: ${persona.communication_style}
+- Decision factors: ${joinOrEmpty(persona.decision_factors)}
+- Knowledge level: ${persona.knowledge_level}
+- Consultation style: ${persona.consultation_style}
+- Typical objections: ${joinOrEmpty(persona.typical_objections)}
+- Preferred evidence: ${joinOrEmpty(persona.preferred_evidence)}
+- Gender: ${persona.gender ?? "Not specified"}
+- Available consultation time: ${persona.availableTimeSeconds} seconds
+- Baseline skepticism level: ${persona.baseline_skepticism_level}
+- Behavioral triggers:\n  - Positive: ${joinOrEmpty(persona.behavioral_triggers.positive)}\n  - Negative: ${joinOrEmpty(persona.behavioral_triggers.negative)}
+
+---
+
+### Dynamic State (subject to change):
+- Mood: ${currentMood}
+- Current skepticism level: ${currentSkepticismLevel}
+- Current Stage: ${conversationStage}
+- Time pressure level: ${timePressureLevel}
+- Remaining time: ${remainingTime} seconds
+
+---
+
+### Conversation Transcript (chronological):
+${formattedTranscript}
+
+---
+
+### Last Rep Message:
+${lastRepMessage}
+
+Return ONLY JSON:
+{
+  "doctorReply": "<your response>",
+  "relevancy": -1 | 0 | 1,
+  "justification": "<brief>",
+  "nextConversationStage": "Introduction" | "Discussion" | "ObjectionDiscussion" | "Closure",
+  "nextMood": "Neutral" | "Engaged" | "Dismissive",
+  "signals": ["asks for data", "challenges claim"]
+}
+`;
+}
+
+// ===================== Parsing and State Update =====================
+
+import { z } from "zod";
+
+const DoctorLLMResponseSchema = z.object({
+  doctorReply: z.string().default("I understand. Could you provide more details?"),
+  relevancy: z.union([z.literal(-1), z.literal(0), z.literal(1)]).default(0),
+  justification: z.string().default("Neutral response to maintain conversation flow."),
+  nextConversationStage: z.enum(["Introduction", "Discussion", "ObjectionDiscussion", "Closure"]).default("Discussion"),
+  nextMood: z.enum(["Neutral", "Engaged", "Dismissive"]).default("Neutral"),
+  signals: z.array(z.string()).optional().default([]),
+});
+
+type DoctorLLMResponseParsed = z.infer<typeof DoctorLLMResponseSchema>;
+
+function parseDoctorLLMResponse(jsonString: string): DoctorLLMResponseParsed {
+  try {
+    let parsed: any;
+    try { parsed = JSON.parse(jsonString); } catch { return DoctorLLMResponseSchema.parse({}); }
+    const result = DoctorLLMResponseSchema.safeParse(parsed);
+    return result.success ? result.data : DoctorLLMResponseSchema.parse(parsed);
+  } catch {
+    return DoctorLLMResponseSchema.parse({});
+  }
+}
+
+function transitionMood(currentMood: DoctorMood, relevancy: -1 | 0 | 1, timePressureLevel: number): DoctorMood {
+  const t = Math.min(5, Math.max(0, timePressureLevel));
+  if (t >= 4) return "Dismissive";
+  if (relevancy === 1) return "Engaged";
+  if (relevancy === -1) return "Dismissive";
+  return currentMood;
+}
+
+function updateDoctorState(
+  state: DoctorBehaviorState,
+  llmResponse: DoctorLLMResponseParsed,
+  timeElapsedDelta: number,
+  baselineSkepticismLevel: SkepticismLevel
+): DoctorBehaviorState {
+  const newTrust = Math.min(100, Math.max(0, state.trust + llmResponse.relevancy * 10));
+  let newTime = state.timePressureLevel;
+  if (state.secondsElapsed > 0 && llmResponse.relevancy === 1) newTime = Math.max(0, state.timePressureLevel - 1);
+  else if (state.secondsElapsed > 0 && llmResponse.relevancy <= 0) newTime = Math.min(5, state.timePressureLevel + 1);
+
+  const updatedSk = updateSkepticism(state.skepticismState, llmResponse.relevancy);
+  const newSkLevel = calculateSkepticismLevel(baselineSkepticismLevel, updatedSk);
+
+  return {
+    ...state,
+    mood: llmResponse.nextMood,
+    trust: newTrust,
+    timePressureLevel: newTime,
+    conversationStage: llmResponse.nextConversationStage,
+    secondsElapsed: state.secondsElapsed + Math.max(0, timeElapsedDelta),
+    skepticismState: updatedSk,
+    currentSkepticismLevel: newSkLevel,
+    notes: llmResponse.justification,
+  };
+}
+
+// ===================== Helpers =====================
+
+function calculateRealTimeElapsed(conversationHistory: ConversationMessage[]): number {
+  if (!conversationHistory.length) return 0;
+  const first = new Date(conversationHistory[0].timestamp).getTime();
+  return Math.floor((Date.now() - first) / 1000);
+}
+
+function createConversationMessage(role: Role, content: string, isLastRepMessage = false): ConversationMessage {
+  return { role, timestamp: new Date().toISOString(), content, isLastRepMessage };
+}
+
+function initializeDoctorState(
+  baselineSkepticismLevel: SkepticismLevel,
+  initialMood: DoctorMood = "Neutral",
+  initialTrust = 50
+): DoctorBehaviorState {
+  return {
+    mood: initialMood,
+    timePressureLevel: 1,
+    conversationStage: "Introduction",
+    secondsElapsed: 0,
+    trust: initialTrust,
+    skepticismState: initializeSkepticismState(),
+    currentSkepticismLevel: baselineSkepticismLevel,
+    notes: "Initial state",
+  };
+}
+Evaluation
+import { z } from "zod";
+import { ChatOpenAI } from "langchain/chat_models/openai";
+import { HumanMessage, SystemMessage } from "langchain/schema";
+import {
+  ConversationMessage,
+  DoctorTraitProfile,
+  DoctorBehaviorState,
+} from "./types"; // Adjust path as needed
+
+// ===================== Evaluation Output Types =====================
+
+const TurnFeedbackSchema = z.object({
+  turnIndex: z.number(),
+  speaker: z.literal("rep"),
+  content: z.string(),
+  critique: z.string(),
+  sentiment: z.enum(["positive", "negative", "neutral"]),
+  couldHaveSaid: z.array(z.string()).optional(),
+  justification: z.string(),
+});
+
+type TurnFeedback = z.infer<typeof TurnFeedbackSchema>;
+
+const EvaluationOutputSchema = z.object({
+  scores: z.object({
+    accuracy: z.number().min(0).max(100),
+    empathy: z.number().min(0).max(100),
+    compliance: z.number().min(0).max(100),
+    adaptability: z.number().min(0).max(100),
+  }),
+  compliance: z.object({
+    mustSayMentioned: z.array(z.string()),
+    mustSayMissed: z.array(z.string()),
+    mustNotSayViolations: z.array(z.string()),
+  }),
+  feedbackSummary: z.string(),
+  turnLevelAnalysis: z.array(TurnFeedbackSchema),
+});
+
+type EvaluationOutput = z.infer<typeof EvaluationOutputSchema>;
+
+// ===================== LangChain LLM Setup =====================
+
+const llm = new ChatOpenAI({
+  temperature: 0,
+  modelName: "gpt-4",
+});
+
+// ===================== Helper Functions =====================
+
+function getRepTurns(conversation: ConversationMessage[]): ConversationMessage[] {
+  return conversation.filter((msg) => msg.role === "rep");
+}
+
+function formatTurnContext(
+  index: number,
+  conversation: ConversationMessage[],
+  windowSize = 3
+) {
+  const start = Math.max(0, index - windowSize);
+  const slice = conversation.slice(start, index + 1);
+  return slice
+    .map((msg) => `${msg.role.toUpperCase()}: ${msg.content}`)
+    .join("\n");
+}
+
+function checkCompliance(
+  transcript: ConversationMessage[],
+  mustSay: string[],
+  mustNotSay: string[]
+) {
+  const fullText = transcript.map((m) => m.content.toLowerCase()).join(" ");
+
+  const mustSayMentioned = mustSay.filter((phrase) =>
+    fullText.includes(phrase.toLowerCase())
+  );
+  const mustSayMissed = mustSay.filter(
+    (phrase) => !fullText.includes(phrase.toLowerCase())
+  );
+  const mustNotSayViolations = mustNotSay.filter((phrase) =>
+    fullText.includes(phrase.toLowerCase())
+  );
+
+  return {
+    mustSayMentioned,
+    mustSayMissed,
+    mustNotSayViolations,
+  };
+}
+
+// ===================== LLM Prompt & Parsing =====================
+
+async function analyzeTurn(
+  turnIndex: number,
+  conversation: ConversationMessage[],
+  persona: DoctorTraitProfile,
+  behaviorState?: DoctorBehaviorState
+): Promise<TurnFeedback> {
+  const context = formatTurnContext(turnIndex, conversation);
+
+  const personaSummary = `
+Doctor Persona:
+Description: ${persona.description}
+Communication Style: ${persona.communication_style}
+Decision Factors: ${persona.decision_factors.join(", ")}
+Baseline Skepticism Level: ${persona.baseline_skepticism_level}
+Knowledge Level: ${persona.knowledge_level}
+Consultation Style: ${persona.consultation_style}
+Typical Objections: ${persona.typical_objections.join(", ")}
+Preferred Evidence: ${persona.preferred_evidence.join(", ")}
+`;
+
+  const behaviorSummary = behaviorState
+    ? `
+Current Doctor State:
+Mood: ${behaviorState.mood}
+Time Pressure Level: ${behaviorState.timePressureLevel}
+Conversation Stage: ${behaviorState.conversationStage}
+Seconds Elapsed: ${behaviorState.secondsElapsed}
+Trust Level: ${behaviorState.trust}
+Current Skepticism Level: ${behaviorState.currentSkepticismLevel}
+Skepticism Scores (recent): [${behaviorState.skepticismState.scores.join(
+      ", "
+    )}]
+Notes: ${behaviorState.notes ?? "None"}
+`
+    : "";
+
+  const systemPrompt = `
+You are a medical sales coach AI. You are given:
+- The static doctor persona traits
+- The dynamic doctor behavior state during this turn (if available)
+- The conversation snippet up to and including the current rep message
+
+Your task: Provide a detailed evaluation of the rep's message in this context.
+
+Please respond ONLY with a strict JSON with:
+{
+  "turnIndex": number, // index of the turn
+  "speaker": "rep",
+  "content": string, // the rep message content
+  "critique": string, // detailed critique of the rep's message
+  "sentiment": "positive" | "negative" | "neutral",
+  "couldHaveSaid": string[], // optional suggestions
+  "justification": string // reasoning for your critique and sentiment
+}
+`;
+
+  const messages = [
+    new SystemMessage(personaSummary + behaviorSummary + systemPrompt),
+    new HumanMessage(context),
+  ];
+
+  const response = await llm.call(messages);
+
+  const parsed = TurnFeedbackSchema.parse(JSON.parse(response.content));
+  return parsed;
+}
+
+async function generateSummaryAndScores(
+  transcript: ConversationMessage[],
+  persona: DoctorTraitProfile
+): Promise<Pick<EvaluationOutput, "scores" | "feedbackSummary">> {
+  const fullTranscript = transcript
+    .map((m) => `${m.role.toUpperCase()}: ${m.content}`)
+    .join("\n");
+
+  const personaSummary = `
+Doctor Persona:
+Description: ${persona.description}
+Communication Style: ${persona.communication_style}
+Decision Factors: ${persona.decision_factors.join(", ")}
+Baseline Skepticism Level: ${persona.baseline_skepticism_level}
+Knowledge Level: ${persona.knowledge_level}
+Consultation Style: ${persona.consultation_style}
+Typical Objections: ${persona.typical_objections.join(", ")}
+Preferred Evidence: ${persona.preferred_evidence.join(", ")}
+`;
+
+  const systemPrompt = `
+You are an expert evaluator of medical sales conversations.
+
+Given the doctor persona above and the conversation transcript, analyze the conversation and provide:
+- Accuracy score (0-100)
+- Empathy score (0-100)
+- Compliance score (0-100)
+- Adaptability score (0-100)
+- A concise 2-3 sentence feedback summary
+
+Return a strict JSON object with keys: accuracy, empathy, compliance, adaptability, feedbackSummary
+`;
+
+  const messages = [
+    new SystemMessage(personaSummary + systemPrompt),
+    new HumanMessage(fullTranscript),
+  ];
+
+  const response = await llm.call(messages);
+  const json = JSON.parse(response.content);
+
+  return {
+    scores: {
+      accuracy: Number(json.accuracy),
+      empathy: Number(json.empathy),
+      compliance: Number(json.compliance),
+      adaptability: Number(json.adaptability),
+    },
+    feedbackSummary: json.feedbackSummary,
+  };
+}
+
+// ===================== Main Evaluation Function =====================
+
+async function evaluateConversation({
+  transcript,
+  persona,
+  behaviorStates,
+  mustSay,
+  mustNotSay,
+}: {
+  transcript: ConversationMessage[];
+  persona: DoctorTraitProfile;
+  behaviorStates?: DoctorBehaviorState[]; // optional array aligned by turn index
+  mustSay: string[];
+  mustNotSay: string[];
+}): Promise<EvaluationOutput> {
+  const repTurns = getRepTurns(transcript);
+  const turnFeedbacks: TurnFeedback[] = [];
+
+  for (let i = 0; i < repTurns.length; i++) {
+    const turnIndex = transcript.indexOf(repTurns[i]);
+    const behaviorState = behaviorStates ? behaviorStates[turnIndex] : undefined;
+
+    const feedback = await analyzeTurn(turnIndex, transcript, persona, behaviorState);
+    turnFeedbacks.push(feedback);
+  }
+
+  const compliance = checkCompliance(transcript, mustSay, mustNotSay);
+
+  const complianceScore = Math.max(
+    0,
+    100 -
+      (compliance.mustSayMissed.length * 10 + compliance.mustNotSayViolations.length * 10)
+  );
+
+  const { scores, feedbackSummary } = await generateSummaryAndScores(transcript, persona);
+
+  scores.compliance = complianceScore;
+
+  const output: EvaluationOutput = {
+    scores,
+    compliance,
+    feedbackSummary,
+    turnLevelAnalysis: turnFeedbacks,
+  };
+
+  return EvaluationOutputSchema.parse(output);
+}
+
+// ===================== Exports =====================
+
+export {
+  TurnFeedbackSchema,
+  TurnFeedback,
+  EvaluationOutputSchema,
+  EvaluationOutput,
+  analyzeTurn,
+  generateSummaryAndScores,
+  evaluateConversation,
+};

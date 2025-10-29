@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MedRep Coach</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>MedRep Coach</h1>
+      <div id="session-status">Disconnected</div>
+    </header>
+
+    <main class="container">
+      <section class="controls">
+        <button id="rt-start">Start Voice</button>
+        <button id="rt-stop" disabled>Stop Voice</button>
+        <span class="label">Mic:</span>
+        <span id="mic-level">0%</span>
+      </section>
+
+      <section class="coaching-overlay" id="coaching-overlay" hidden>
+        <div class="coaching-hint" id="coaching-hint">
+          <span class="hint-icon">💡</span>
+          <span class="hint-text">Ready to start conversation</span>
+        </div>
+      </section>
+
+      <section class="conversation">
+        <audio id="doctor-audio" autoplay></audio>
+      </section>
+
+      <section class="feedback" id="feedback" hidden>
+        <h2>Feedback</h2>
+        <pre id="feedback-json"></pre>
+      </section>
+    </main>
+
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script type="module" src="/bundle.js"></script>
+  </body>
+</html>
+
+
